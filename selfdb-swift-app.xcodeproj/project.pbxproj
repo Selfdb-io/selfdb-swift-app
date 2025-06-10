@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F93EBCD42DF86EFD00F1AA6E /* SelfDB in Frameworks */ = {isa = PBXBuildFile; productRef = F93EBCD32DF86EFD00F1AA6E /* SelfDB */; };
 		F953A4462DF82D2400B6A29F /* SelfDB in Frameworks */ = {isa = PBXBuildFile; productRef = F953A4452DF82D2400B6A29F /* SelfDB */; };
 /* End PBXBuildFile section */
 
@@ -27,6 +28,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F93EBCD42DF86EFD00F1AA6E /* SelfDB in Frameworks */,
 				F953A4462DF82D2400B6A29F /* SelfDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -71,6 +73,7 @@
 			name = "selfdb-swift-app";
 			packageProductDependencies = (
 				F953A4452DF82D2400B6A29F /* SelfDB */,
+				F93EBCD32DF86EFD00F1AA6E /* SelfDB */,
 			);
 			productName = "selfdb-swift-app";
 			productReference = F952B0572DF105A400EBA52A /* selfdb-swift-app.app */;
@@ -101,7 +104,7 @@
 			mainGroup = F952B04E2DF105A400EBA52A;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				F953A4442DF82D2400B6A29F /* XCLocalSwiftPackageReference "../../selfdb-swift-sdk" */,
+				F93EBCD22DF86EFD00F1AA6E /* XCRemoteSwiftPackageReference "selfdb-ios" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = F952B0582DF105A400EBA52A /* Products */;
@@ -353,14 +356,23 @@
 		};
 /* End XCConfigurationList section */
 
-/* Begin XCLocalSwiftPackageReference section */
-		F953A4442DF82D2400B6A29F /* XCLocalSwiftPackageReference "../../selfdb-swift-sdk" */ = {
-			isa = XCLocalSwiftPackageReference;
-			relativePath = "../../selfdb-swift-sdk";
+/* Begin XCRemoteSwiftPackageReference section */
+		F93EBCD22DF86EFD00F1AA6E /* XCRemoteSwiftPackageReference "selfdb-ios" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/Selfdb-io/selfdb-ios";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.0.1;
+			};
 		};
-/* End XCLocalSwiftPackageReference section */
+/* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		F93EBCD32DF86EFD00F1AA6E /* SelfDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = F93EBCD22DF86EFD00F1AA6E /* XCRemoteSwiftPackageReference "selfdb-ios" */;
+			productName = SelfDB;
+		};
 		F953A4452DF82D2400B6A29F /* SelfDB */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = SelfDB;
