@@ -1,6 +1,6 @@
 # SelfDB Swift Sample App
 
-A feature-rich discussion board iOS application demonstrating the capabilities of [SelfDB](https://selfdb.dev) as a backend-as-a-service (BaaS) solution. This sample app showcases authentication, real-time data management, file storage, and more using the SelfDB Swift SDK.
+A feature-rich discussion board iOS application demonstrating the capabilities of [SelfDB](https://selfdb.io) as a backend-as-a-service (BaaS) solution. This sample app showcases authentication, real-time data management, file storage, and more using the SelfDB Swift SDK.
 
 ## Features
 
