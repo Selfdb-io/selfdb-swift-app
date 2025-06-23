@@ -27,9 +27,9 @@ final class SelfDBManager: ObservableObject {
     // MARK: - Configuration --------------------------------------------------
     
     private let config = SelfDBConfig(
-        apiURL: URL(string: "http://localhost:8000/api/v1")!,
-        storageURL: URL(string: "http://localhost:8001")!,
-        apiKey: "your-anon-key-here"
+        apiURL: URL(string: "https://api.selfdb.io/api/v1")!,
+        storageURL: URL(string: "https://storage.selfdb.io")!,
+        apiKey: "cb14ecd3064c49478ce9b180f9aabdcd9375ae8f00a3cf33d7f6c95b737decca"
     )
     
     init() {
