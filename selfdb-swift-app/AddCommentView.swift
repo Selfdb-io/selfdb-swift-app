@@ -97,23 +97,16 @@ struct AddCommentView: View {
                                     .frame(maxHeight: 200)
                                     .cornerRadius(12)
                             } else if selectedMediaType?.starts(with: "video/") == true {
-                                // Display video placeholder
-                                VStack {
-                                    Image(systemName: "video.fill")
-                                        .font(.system(size: 50))
-                                        .foregroundColor(.blue)
-                                    Text("Video Selected")
-                                        .font(.caption)
-                                        .foregroundColor(.secondary)
-                                }
-                                .frame(height: 150)
-                                .frame(maxWidth: .infinity)
-                                .background(Color.gray.opacity(0.1))
-                                .cornerRadius(12)
+                                // Display video preview using FileViewer
+                                FileViewer(localVideoData: mediaData, selfDBManager: selfDBManager)
+                                    .frame(maxHeight: 200)
+                                    .cornerRadius(12)
                             }
                             
                             Button("Remove Media") {
-                                clearSelectedMedia()
+                                Task {
+                                    await clearSelectedMedia()
+                                }
                             }
                             .foregroundColor(.red)
                             .font(.caption)
@@ -285,7 +278,12 @@ struct AddCommentView: View {
         }
     }
     
-    private func clearSelectedMedia() {
+    private func clearSelectedMedia() async {
+        // If we're editing and have selected new media, delete the old remote file to prevent orphans
+        if isEditMode, let oldFileId = editingComment?.fileId, !oldFileId.isEmpty {
+            _ = await selfDBManager.deleteRemoteFile(oldFileId)
+        }
+        
         selectedMediaData = nil
         selectedFileName = nil
         selectedMediaType = nil

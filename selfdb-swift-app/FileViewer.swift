@@ -86,9 +86,40 @@ final class FileURLCache {
     }
 }
 
+// MARK: - Local Video Manager
+final class LocalVideoManager {
+    static let shared = LocalVideoManager()
+    private var tempFiles: [String] = []
+    
+    private init() {}
+    
+    func createTempVideoURL(from data: Data) -> URL? {
+        let tempDir = FileManager.default.temporaryDirectory
+        let fileName = "temp_video_\(UUID().uuidString).mp4"
+        let tempURL = tempDir.appendingPathComponent(fileName)
+        
+        do {
+            try data.write(to: tempURL)
+            tempFiles.append(tempURL.path)
+            return tempURL
+        } catch {
+            print("❌ Failed to create temp video file: \(error)")
+            return nil
+        }
+    }
+    
+    func cleanup() {
+        for filePath in tempFiles {
+            try? FileManager.default.removeItem(atPath: filePath)
+        }
+        tempFiles.removeAll()
+    }
+}
+
 // MARK: - FileViewer
 struct FileViewer: View {
     let fileId: String
+    let localVideoData: Data?
     @ObservedObject var selfDBManager: SelfDBManager
     
     @State private var fileUrl: String?
@@ -97,6 +128,21 @@ struct FileViewer: View {
     @State private var player: AVPlayer?
     @State private var isImageFullscreen = false
     @State private var isVideoFullscreen = false
+    @State private var localVideoURL: URL?
+    
+    // Original initializer for remote files (unchanged)
+    init(fileId: String, selfDBManager: SelfDBManager) {
+        self.fileId = fileId
+        self.localVideoData = nil
+        self.selfDBManager = selfDBManager
+    }
+    
+    // New initializer for local videos
+    init(localVideoData: Data, selfDBManager: SelfDBManager) {
+        self.fileId = ""
+        self.localVideoData = localVideoData
+        self.selfDBManager = selfDBManager
+    }
     
     // Constants
     private let cardHeight: CGFloat = 200
@@ -110,11 +156,25 @@ struct FileViewer: View {
             contentView
         }
         .onAppear {
-            loadTask = Task { await loadFileUrl() }
+            if let localVideoData = localVideoData {
+                // Handle local video
+                localVideoURL = LocalVideoManager.shared.createTempVideoURL(from: localVideoData)
+                if let videoURL = localVideoURL {
+                    player = AVPlayer(url: videoURL)
+                }
+                isLoading = false
+            } else {
+                // Handle remote file (original logic)
+                loadTask = Task { await loadFileUrl() }
+            }
         }
         .onDisappear {
             loadTask?.cancel()
             player?.pause()
+            // Clean up temp files if needed
+            if localVideoURL != nil {
+                LocalVideoManager.shared.cleanup()
+            }
         }
         .fullScreenCover(isPresented: $isImageFullscreen) {
             FullscreenImageView(url: fileUrl, isPresented: $isImageFullscreen)
@@ -129,6 +189,12 @@ struct FileViewer: View {
     private var contentView: some View {
         if isLoading {
             LoadingView()
+        } else if localVideoData != nil {
+            // Show local video
+            LocalVideoContentView(
+                player: $player,
+                onVideoTap: { isVideoFullscreen = true }
+            )
         } else if let fileUrl = fileUrl {
             FileContentView(
                 url: fileUrl,
@@ -439,6 +505,33 @@ struct FullscreenVideoView: View {
                 Spacer()
             }
         }
+    }
+}
+
+// MARK: - Local Video Content View
+struct LocalVideoContentView: View {
+    @Binding var player: AVPlayer?
+    let onVideoTap: () -> Void
+    
+    var body: some View {
+        ZStack {
+            Color.black
+            
+            if let player = player {
+                VideoPlayer(player: player)
+                    .disabled(true)
+            } else {
+                LoadingView()
+            }
+            
+            // Play button overlay
+            Image(systemName: "play.circle.fill")
+                .font(.system(size: 50))
+                .foregroundColor(.white)
+                .shadow(radius: 3)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onVideoTap)
     }
 }
 
