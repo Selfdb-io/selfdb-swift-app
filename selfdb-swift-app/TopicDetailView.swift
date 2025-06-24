@@ -65,14 +65,16 @@ struct TopicDetailView: View {
         }
         .navigationBarHidden(true)
         .fullScreenCover(isPresented: $showingAddComment) {
-            AddCommentView(
-                isPresented: $showingAddComment,
-                topicId: currentTopic.id,
-                selfDBManager: selfDBManager,
-                onCommentAdded: { _ in            // ⬅️ refresh from server
-                    Task { await loadComments() }
-                }
-            )
+            if let topicId = currentTopic.id {
+                AddCommentView(
+                    isPresented: $showingAddComment,
+                    topicId: topicId,
+                    selfDBManager: selfDBManager,
+                    onCommentAdded: { _ in            // ⬅️ refresh from server
+                        Task { await loadComments() }
+                    }
+                )
+            }
         }
         .fullScreenCover(isPresented: $showingEditTopic) {
             CreateTopicView(
@@ -86,25 +88,29 @@ struct TopicDetailView: View {
             )
         }
         .fullScreenCover(item: $editingComment) { comment in
-            AddCommentView(
-                isPresented: .init(
-                    get: { editingComment != nil },
-                    set: { if !$0 { editingComment = nil } }
-                ),
-                topicId: currentTopic.id,
-                selfDBManager: selfDBManager,
-                onCommentAdded: { _ in            // ⬅️ refresh from server
-                    Task {
-                        // Force refresh the specific comment's file viewer
-                        commentFileViewerKeys[comment.id] = UUID()
-                        await loadComments()
+            if let topicId = currentTopic.id {
+                AddCommentView(
+                    isPresented: .init(
+                        get: { editingComment != nil },
+                        set: { if !$0 { editingComment = nil } }
+                    ),
+                    topicId: topicId,
+                    selfDBManager: selfDBManager,
+                    onCommentAdded: { _ in            // ⬅️ refresh from server
+                        Task {
+                            // Force refresh the specific comment's file viewer
+                            if let commentId = comment.id {
+                                commentFileViewerKeys[commentId] = UUID()
+                            }
+                            await loadComments()
+                        }
+                    },
+                    editingComment: comment,
+                    onCommentDeleted: {               // ⬅️ refresh from server
+                        Task { await loadComments() }
                     }
-                },
-                editingComment: comment,
-                onCommentDeleted: {               // ⬅️ refresh from server
-                    Task { await loadComments() }
-                }
-            )
+                )
+            }
         }
         .task {
             await loadComments()
@@ -190,9 +196,10 @@ struct TopicDetailView: View {
     }
     
     private func loadComments() async {
+        guard let topicId = currentTopic.id else { return }
         isLoadingComments = true
         let fetchedComments = await selfDBManager
-            .fetchCommentsForTopic(currentTopic.id)
+            .fetchCommentsForTopic(topicId)
         
         // Don't preload - let FileViewer handle it individually
          
@@ -200,8 +207,8 @@ struct TopicDetailView: View {
              self.comments = fetchedComments.sorted { $0.createdAt < $1.createdAt }
             // Reset comment file viewer keys
             for comment in fetchedComments {
-                if commentFileViewerKeys[comment.id] == nil {
-                    commentFileViewerKeys[comment.id] = UUID()
+                if let commentId = comment.id, commentFileViewerKeys[commentId] == nil {
+                    commentFileViewerKeys[commentId] = UUID()
                 }
             }
              self.isLoadingComments = false
@@ -210,9 +217,16 @@ struct TopicDetailView: View {
     
     private func deleteTopicAndDismiss() {
         Task {
-            await selfDBManager.deleteTopic(topicId: currentTopic.id)
+            guard let topicId = currentTopic.id else { return }
+            let deleteSuccess = await selfDBManager.deleteTopic(topicId: topicId)
             await MainActor.run {
-                dismiss()
+                if deleteSuccess {
+                    dismiss()
+                } else {
+                    // Could show an error alert here if needed
+                    // For now, still dismiss since the UI expects it
+                    dismiss()
+                }
             }
         }
     }
@@ -328,7 +342,7 @@ extension TopicDetailView {
                             onDelete: { deletedComment in
                                 comments.removeAll { $0.id == deletedComment.id }
                             },
-                            fileViewerKey: commentFileViewerKeys[comment.id] ?? UUID()
+                            fileViewerKey: commentFileViewerKeys[comment.id ?? ""] ?? UUID()
                         )
                     }
                 }

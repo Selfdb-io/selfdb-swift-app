@@ -39,8 +39,8 @@ struct ContentView: View {
             #if DEBUG
             await manager.fetchTopics()
             print("📋 Topics:", manager.topics.first ?? "none")
-            if let first = manager.topics.first {
-                let comments = await manager.fetchCommentsForTopic(first.id)
+            if let first = manager.topics.first, let topicId = first.id {
+                let comments = await manager.fetchCommentsForTopic(topicId)
                 print("💬 \(comments.count) comments loaded for first topic")
             }
             #endif

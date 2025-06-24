@@ -1,13 +1,14 @@
 import Foundation
+import SelfDB
 
 // MARK: - Topic
-struct Topic: Codable, Identifiable, Equatable {
-    let id: String
-    let title: String
-    let content: String
+struct Topic: Codable, Identifiable, Equatable, SelfDBFileAttachable {
+    var id: String?
+    var title: String
+    var content: String
     let authorName: String
     let userId: String?
-    let fileId: String?
+    var fileId: String?
     let createdAt: String
     let updatedAt: String
 
@@ -19,16 +20,38 @@ struct Topic: Codable, Identifiable, Equatable {
         case createdAt  = "created_at"
         case updatedAt  = "updated_at"
     }
+    
+    static let tableName = "topics"
+    
+    // Custom fromRow implementation to handle the specific conversion
+    static func fromRow(_ row: [String: AnyCodable]) -> Topic? {
+        guard let id        = row["id"]?.value as? String,
+              let title     = row["title"]?.value as? String,
+              let content   = row["content"]?.value as? String,
+              let author    = row["author_name"]?.value as? String,
+              let created   = row["created_at"]?.value as? String,
+              let updated   = row["updated_at"]?.value as? String
+        else { return nil }
+        
+        return Topic(id: id,
+                     title: title,
+                     content: content,
+                     authorName: author,
+                     userId: row["user_id"]?.value as? String,
+                     fileId: row["file_id"]?.value as? String,
+                     createdAt: created,
+                     updatedAt: updated)
+    }
 }
 
 // MARK: - Comment
-struct Comment: Codable, Identifiable, Equatable {
-    let id: String
+struct Comment: Codable, Identifiable, Equatable, SelfDBFileAttachable {
+    var id: String?
     let topicId: String
-    let content: String
+    var content: String
     let authorName: String
     let userId: String?
-    let fileId: String?
+    var fileId: String?
     let createdAt: String
     let updatedAt: String
 
@@ -40,6 +63,30 @@ struct Comment: Codable, Identifiable, Equatable {
         case fileId     = "file_id"
         case createdAt  = "created_at"
         case updatedAt  = "updated_at"
+    }
+    
+    static let tableName = "comments"
+    
+    // Custom fromRow implementation to handle the specific conversion
+    static func fromRow(_ row: [String: AnyCodable]) -> Comment? {
+        guard let id        = row["id"]?.value as? String,
+              let topicId   = row["topic_id"]?.value as? String,
+              let content   = row["content"]?.value as? String,
+              let author    = row["author_name"]?.value as? String,
+              let created   = row["created_at"]?.value as? String,
+              let updated   = row["updated_at"]?.value as? String
+        else { return nil }
+
+        return Comment(
+            id: id,
+            topicId: topicId,
+            content: content,
+            authorName: author,
+            userId: row["user_id"]?.value as? String,
+            fileId: row["file_id"]?.value as? String,
+            createdAt: created,
+            updatedAt: updated
+        )
     }
 }
 
@@ -55,7 +102,7 @@ extension Topic {
               fileId != "nil" else {
             return false
         }
-        print("📎 Topic \(id) has file \(fileId)")
+        print("📎 Topic \(String(describing: id)) has file \(fileId)")
         return true
     }
 }
@@ -71,18 +118,16 @@ extension Comment {
               fileId != "nil" else {
             return false
         }
-        print("📎 Comment \(id) has file \(fileId)")
+        print("📎 Comment \(String(describing: id)) has file \(fileId)")
         return true
     }
 }
 
-// MARK: - Network helpers
+// MARK: - Network helpers using the new Context pattern
 extension Topic {
-    /// Convenience wrapper: fetch all topics and return them.
+    /// Fetch all topics
     static func fetchAll(using manager: SelfDBManager) async -> [Topic] {
-        // We intentionally ignore the Void result of `fetchTopics`
-        _ = await manager.fetchTopics()       // ensure the call is awaited
-        return await manager.topics
+        await SelfDBContext<Topic>.fetchAll(manager: manager)
     }
 
     static func create(
@@ -93,41 +138,59 @@ extension Topic {
         fileData: Data? = nil,
         filename: String? = nil
     ) async -> Topic? {
-        await manager.createTopic(
+        // Don't set dates - let the database handle them
+        let topic = Topic(
+            id: nil,
             title: title,
             content: content,
             authorName: authorName,
-            fileData: fileData,
-            filename: filename
+            userId: nil,
+            fileId: nil,
+            createdAt: "",
+            updatedAt: ""
         )
+        
+        let created = await SelfDBContext<Topic>.create(topic, manager: manager, fileData: fileData, filename: filename)
+        
+        // Refresh topics list after creation
+        if created != nil {
+            await manager.fetchTopics()
+        }
+        
+        return created
     }
 
     static func update(
         using manager: SelfDBManager,
-        topicId: String,
-        title: String,
-        content: String,
+        topic: Topic,
         fileData: Data? = nil,
-        filename: String? = nil
+        filename: String? = nil,
+        oldFileId: String? = nil,
+        removeFile: Bool = false
     ) async -> Topic? {
-        await manager.updateTopic(
-            topicId: topicId,
-            title: title,
-            content: content,
-            fileData: fileData,
-            filename: filename
-        )
+        let updated = await SelfDBContext<Topic>.update(topic, manager: manager, fileData: fileData, filename: filename, oldFileId: oldFileId, removeFile: removeFile)
+        
+        // Refresh topics list after update
+        if updated != nil {
+            await manager.fetchTopics()
+        }
+        
+        return updated
     }
 
-    static func delete(using manager: SelfDBManager, topicId: String) async -> Bool {
-        await manager.deleteTopic(topicId: topicId)
+    static func delete(using manager: SelfDBManager, topic: Topic) async -> Bool {
+        // For topics, we need cascade delete (comments + files)
+        // This will be handled in SelfDBManager+Topics.swift
+        guard let topicId = topic.id else { return false }
+        return await manager.deleteTopicCascade(topicId: topicId)
     }
 }
 
 extension Comment {
-    /// Convenience wrapper: fetch comments for a topic and return them.
+    /// Fetch comments for a topic
     static func fetch(for topicId: String, using manager: SelfDBManager) async -> [Comment] {
-        return await manager.fetchCommentsForTopic(topicId)   // explicit `await`
+        await SelfDBContext<Comment>.fetch(filterColumn: "topic_id", filterValue: topicId, manager: manager)
+            .sorted { $0.createdAt > $1.createdAt } // newest first
     }
 
     static func create(
@@ -138,31 +201,59 @@ extension Comment {
         fileData: Data? = nil,
         filename: String? = nil
     ) async -> Comment? {
-        await manager.createComment(
+        // Don't set dates - let the database handle them
+        let comment = Comment(
+            id: nil,
             topicId: topicId,
             content: content,
             authorName: authorName,
-            fileData: fileData,
-            filename: filename
+            userId: nil,
+            fileId: nil,
+            createdAt: "",
+            updatedAt: ""
         )
+        
+        let created = await SelfDBContext<Comment>.create(comment, manager: manager, fileData: fileData, filename: filename)
+        
+        // Refresh topics to update comment counts
+        if created != nil {
+            await manager.fetchTopics()
+        }
+        
+        return created
     }
 
     static func update(
         using manager: SelfDBManager,
-        commentId: String,
-        content: String,
+        comment: Comment,
         fileData: Data? = nil,
-        filename: String? = nil
+        filename: String? = nil,
+        oldFileId: String? = nil,
+        removeFile: Bool = false
     ) async -> Comment? {
-        await manager.updateComment(
-            commentId: commentId,
-            content: content,
-            fileData: fileData,
-            filename: filename
-        )
+        let updated = await SelfDBContext<Comment>.update(comment, manager: manager, fileData: fileData, filename: filename, oldFileId: oldFileId, removeFile: removeFile)
+        
+        // Refresh topics to keep everything in sync
+        if updated != nil {
+            await manager.fetchTopics()
+        }
+        
+        return updated
     }
 
-    static func delete(using manager: SelfDBManager, commentId: String) async -> Bool {
-        await manager.deleteComment(commentId: commentId)
+    static func delete(using manager: SelfDBManager, comment: Comment) async -> Bool {
+        let deleted = await SelfDBContext<Comment>.delete(comment, manager: manager)
+        
+        // Refresh topics to update comment counts
+        if deleted {
+            await manager.fetchTopics()
+        }
+        
+        return deleted
+    }
+    
+    /// Quick helper – returns total number of comments for a topic
+    static func count(for topicId: String, using manager: SelfDBManager) async -> Int {
+        await SelfDBContext<Comment>.count(filterColumn: "topic_id", filterValue: topicId, manager: manager)
     }
 }

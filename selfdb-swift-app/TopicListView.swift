@@ -326,7 +326,8 @@ struct TopicCardView: View {
         .onAppear {
             loadTask?.cancel()
             loadTask = Task {
-                let count = await selfDBManager.commentCount(for: topic.id)
+                guard let topicId = topic.id else { return }
+                let count = await selfDBManager.commentCount(for: topicId)
                 await MainActor.run {
                     self.commentCount = count
                     self.isLoadingCount = false

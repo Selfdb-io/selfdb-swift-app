@@ -7,6 +7,9 @@
 
 import SwiftUI
 import PhotosUI
+#if os(iOS)
+import UIKit
+#endif
 import AVFoundation
 
 struct CreateTopicView: View {
@@ -29,7 +32,9 @@ struct CreateTopicView: View {
     @State private var selectedMediaData: Data?
     @State private var selectedFileName: String?
     @State private var showingCamera = false
+    #if os(iOS)
     @State private var capturedImage: UIImage?
+    #endif
     @State private var selectedMediaType: String?
     @State private var remoteFileId: String? = nil        // 🔹 keep only the id
     @State private var remoteFileRemoved = false
@@ -312,7 +317,7 @@ struct CreateTopicView: View {
                 (selfDBManager.currentUser?.email ?? "Anonymous") : 
                 authorName.trimmingCharacters(in: .whitespacesAndNewlines)
             
-            await selfDBManager.createTopic(
+            let createdTopic = await selfDBManager.createTopic(
                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
                 content: content.trimmingCharacters(in: .whitespacesAndNewlines),
                 authorName: finalAuthorName,
@@ -321,22 +326,13 @@ struct CreateTopicView: View {
             )
             
             await MainActor.run {
-                if selfDBManager.errorMessage.isEmpty {
-                    // Create a temporary topic for immediate UI update
-                    let tempTopic = Topic(
-                        id: UUID().uuidString,
-                        title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                        content: content.trimmingCharacters(in: .whitespacesAndNewlines),
-                        authorName: finalAuthorName,
-                        userId: selfDBManager.currentUser?.id,
-                        fileId: nil,
-                        createdAt: ISO8601DateFormatter().string(from: Date()),
-                        updatedAt: ISO8601DateFormatter().string(from: Date())
-                    )
-                    onTopicAdded(tempTopic)
+                if let topic = createdTopic {
+                    // Use the actual created topic from the server
+                    onTopicAdded(topic)
                     isPresented = false
                 } else {
-                    errorMessage = selfDBManager.errorMessage
+                    // Handle error case
+                    errorMessage = selfDBManager.errorMessage.isEmpty ? "Failed to create topic" : selfDBManager.errorMessage
                 }
                 isLoading = false
             }
@@ -350,10 +346,10 @@ struct CreateTopicView: View {
         errorMessage = ""
         
         Task {
-            await selfDBManager.updateTopic(
+            let updatedTopic = await selfDBManager.updateTopic(
                  topicId: topicId,
-                 title: title.trimmed(),
-                 content: content.trimmed(),
+                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                 content: content.trimmingCharacters(in: .whitespacesAndNewlines),
                  fileData: selectedMediaData,
                  filename: selectedFileName,
                 oldFileId: originalTopic.fileId,
@@ -361,22 +357,13 @@ struct CreateTopicView: View {
             )
             
             await MainActor.run {
-                if selfDBManager.errorMessage.isEmpty {
-                    // Create updated topic for immediate UI update
-                    let updatedTopic = Topic(
-                        id: originalTopic.id,
-                        title: title.trimmingCharacters(in: .whitespacesAndNewlines),
-                        content: content.trimmingCharacters(in: .whitespacesAndNewlines),
-                        authorName: originalTopic.authorName,
-                        userId: originalTopic.userId,
-                        fileId: originalTopic.fileId,
-                        createdAt: originalTopic.createdAt,
-                        updatedAt: ISO8601DateFormatter().string(from: Date())
-                    )
-                    onTopicAdded(updatedTopic)
+                if let topic = updatedTopic {
+                    // Use the actual updated topic from the server
+                    onTopicAdded(topic)
                     isPresented = false
                 } else {
-                    errorMessage = selfDBManager.errorMessage
+                    // Handle error case
+                    errorMessage = selfDBManager.errorMessage.isEmpty ? "Failed to update topic" : selfDBManager.errorMessage
                 }
                 isLoading = false
             }
@@ -390,13 +377,14 @@ struct CreateTopicView: View {
         errorMessage = ""
         
         Task {
-            await selfDBManager.deleteTopic(topicId: topicId)
+            let deleteSuccess = await selfDBManager.deleteTopic(topicId: topicId)
             
             await MainActor.run {
-                if selfDBManager.errorMessage.isEmpty {
+                if deleteSuccess {
                     isPresented = false
                 } else {
-                    errorMessage = selfDBManager.errorMessage
+                    // Handle error case
+                    errorMessage = selfDBManager.errorMessage.isEmpty ? "Failed to delete topic" : selfDBManager.errorMessage
                 }
                 isLoading = false
             }
@@ -404,6 +392,7 @@ struct CreateTopicView: View {
     }
 }
 
+#if os(iOS)
 struct CameraView: UIViewControllerRepresentable {
     let onImageCaptured: (UIImage) -> Void
     
@@ -439,7 +428,7 @@ struct CameraView: UIViewControllerRepresentable {
         }
     }
 }
-
+#endif
 
 #Preview {
     CreateTopicView(

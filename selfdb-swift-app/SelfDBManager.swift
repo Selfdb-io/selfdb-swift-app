@@ -20,9 +20,9 @@ final class SelfDBManager: ObservableObject {
     @Published var currentUser: User?
     @Published var topics: [Topic]   = []
     
-    // MARK: - Private state
-    private var selfDB: SelfDB?
-    private var bucketId: String?
+    // MARK: - Internal state (accessible to extensions and context)
+    internal var selfDB: SelfDB?
+    internal var bucketId: String?
     
     // MARK: - Configuration --------------------------------------------------
     
@@ -98,7 +98,7 @@ final class SelfDBManager: ObservableObject {
     
     // MARK: - Bucket helpers --------------------------------------------------
     
-    private func ensureUserBucket() async {
+    internal func ensureUserBucket() async {
         guard let sdk = selfDB else { return }
         
         // 🚀 Always use the shared main bucket
@@ -118,210 +118,17 @@ final class SelfDBManager: ObservableObject {
     }
     
     // MARK: - Tiny logger ----------------------------------------------------
-    private func log(_ msg: String) { print("🪵 [SelfDBManager] \(msg)") }
+    internal func log(_ msg: String) { print("🪵 [SelfDBManager] \(msg)") }
     
     // MARK: - Topic helpers ---------------------------------------------------
     
     // Prevent concurrent topic calls
-    private var isFetchingTopics = false
+    internal var isFetchingTopics = false
     
-    func fetchTopics() async {
-        guard let sdk = selfDB else { return }
-        // 🛑 already running?
-        guard !isFetchingTopics else {
-            log("⏳ fetchTopics skipped – already running")
-            return
-        }
-        isFetchingTopics = true
-        defer { isFetchingTopics = false }
-        
-        resetError()
-        isLoading = true
-        log("Fetching topics …")
-        defer { isLoading = false }
-        
-        let res = await sdk.database.getTableData("topics", page: 1, pageSize: 100)
-        
-        if res.isSuccess, let table = res.data {
-            let unsorted = table.data.compactMap(convertRowToTopic)
-            // 🔽 newest first
-            topics = unsorted.sorted { $0.createdAt > $1.createdAt }
-            log("✅ fetched \(topics.count) topics (sorted newest-first)")
-            
-            // 🚫 No automatic comment-count fetch here – keep it to ONE topic call
-            // If callers need comments they can call `fetchCommentsForTopic` explicitly.
-        } else if let err = res.error {
-            print(err.localizedDescription)
-        } else {
-            log("Unknown error in fetchTopics")
-            errorMessage = "Unknown error while fetching topics."
-        }
-    }
-    
-    // MARK: –  Topics  -------------------------------------------------------
-    
-    /// Create and immediately append the new topic, then refresh full list
-    @discardableResult
-    func createTopic(
-        title: String,
-        content: String,
-        authorName: String,
-        fileData: Data? = nil,
-        filename: String? = nil
-    ) async -> Topic? {
-        guard let sdk = selfDB else { return nil }
-        resetError()
-        
-        // Ensure bucket exists for file uploads
-        if fileData != nil && bucketId == nil {
-            await ensureUserBucket()
-        }
-        
-        var insert: [String: Any] = [
-            "title":       title,
-            "content":     content,
-            "author_name": authorName
-        ]
-        // ⬇️ only attach user_id when we actually have one
-        if let uid = currentUser?.id, !uid.isEmpty {
-            insert["user_id"] = uid
-        }
-
-        if let data = fileData,
-           let name = filename,
-           let bucket = bucketId,
-           let fileId = await uploadFile(data: data, filename: name, bucketId: bucket) {
-            insert["file_id"] = fileId
-        }
-        
-        let res = await sdk.database.insertRow("topics", data: insert)
-        
-        guard res.isSuccess,
-              let row = res.data,
-              let newTopic = convertRowToTopic(row)
-        else {
-            errorMessage = res.error?.localizedDescription ?? "Insert failed"
-            return nil
-        }
-        
-        await MainActor.run {
-            // keep newest-first order
-            topics.insert(newTopic, at: 0)
-        }
-        // 🚀 always refresh from server so counts & ordering stay correct
-        Task { await fetchTopics() }
-        return newTopic
-    }
-    
-    /// Update on server and refresh list
-    @discardableResult
-    func updateTopic(
-        topicId: String,
-        title: String,
-        content: String,
-        fileData: Data? = nil,
-        filename: String? = nil,
-        oldFileId: String? = nil,
-        removeFile: Bool = false                 // 🔹 NEW
-    ) async -> Topic? {
-        guard let sdk = selfDB else { return nil }
-        
-        // Ensure bucket exists for file uploads
-        if fileData != nil && bucketId == nil {
-            await ensureUserBucket()
-        }
-        
-        var update: [String: Any] = [
-            "title": title,
-            "content": content
-        ]
-        if removeFile {                     // clear DB reference
-            update["file_id"] = NSNull()
-        }
-        
-        if let data = fileData {
-            // 🔸 remove previous file first (ignore result)
-            if let oldId = oldFileId {
-                _ = await sdk.storage.deleteFile(oldId)
-                FileURLCache.shared.invalidate(fileId: oldId)
-            }
-            if let name = filename,
-               let bucket = bucketId,
-               let fileId = await uploadFile(data: data, filename: name, bucketId: bucket) {
-                update["file_id"] = fileId
-            }
-        }
-        
-        let res = await sdk.database.updateRow("topics", rowId: topicId, data: update)
-        
-        guard res.isSuccess,
-              let row = res.data,                               // <- DICT, not array
-              let updated = convertRowToTopic(row)
-        else {
-            errorMessage = res.error?.localizedDescription ?? "Update failed"
-            return nil
-        }
-        
-        await MainActor.run {
-            if let idx = topics.firstIndex(where: { $0.id == topicId }) {
-                topics[idx] = updated
-            }
-        }
-        Task { await fetchTopics() }        // 🔄 pull fresh list
-        return updated
-    }
-    
-    /// Delete topic then *also* delete all attached comments & files
-    @discardableResult
-    func deleteTopic(topicId: String) async -> Bool {
-        guard let sdk = selfDB else { return false }
-
-        // 1️⃣ Load all comments belonging to the topic
-        let commentsRes = await sdk.database.getTableData(
-            "comments",
-            page: 1,
-            pageSize: 1_000,                 // plenty
-            filterColumn: "topic_id",
-            filterValue: topicId
-        )
-        if let commentRows = commentsRes.data?.data {
-            for row in commentRows {
-                if let fid = row["file_id"]?.value as? String {
-                    _ = await sdk.storage.deleteFile(fid)   // ignore result
-                    FileURLCache.shared.invalidate(fileId: fid)
-                }
-                if let cid = row["id"]?.value as? String {
-                    _ = await sdk.database.deleteRow("comments", rowId: cid)
-                }
-            }
-        }
-
-        // 2️⃣ Delete topic-level file (if any)
-        if let topicRow = (await sdk.database.getTableData(
-            "topics",
-            page: 1,
-            pageSize: 1,
-            filterColumn: "id",
-            filterValue: topicId
-        )).data?.data.first,
-           let fid = topicRow["file_id"]?.value as? String {
-            _ = await sdk.storage.deleteFile(fid)
-            FileURLCache.shared.invalidate(fileId: fid)
-        }
-
-        // 3️⃣ Delete the topic itself
-        let res = await sdk.database.deleteRow("topics", rowId: topicId)
-        if res.isSuccess {
-            await MainActor.run { topics.removeAll { $0.id == topicId } }
-            return true
-        }
-        errorMessage = res.error?.localizedDescription ?? "Delete failed"
-        return false
-    }
     
     // MARK: - File helpers ----------------------------------------------------
     
-    private func uploadFile(data: Data, filename: String, bucketId: String) async -> String? {
+    internal func uploadFile(data: Data, filename: String, bucketId: String) async -> String? {
         guard let sdk = selfDB else { return nil }
         let req = InitiateUploadRequest(
             filename: filename,
@@ -343,46 +150,6 @@ final class SelfDBManager: ObservableObject {
     
     // MARK: - Utilities -------------------------------------------------------
 
-    private func convertRowToTopic(_ row: [String: AnyCodable]) -> Topic? {
-        guard let id        = row["id"]?.value as? String,
-              let title     = row["title"]?.value as? String,
-              let content   = row["content"]?.value as? String,
-              let author    = row["author_name"]?.value as? String,
-              let created   = row["created_at"]?.value as? String,
-              let updated   = row["updated_at"]?.value as? String
-        else { return nil }
-        
-        return Topic(id: id,
-                     title: title,
-                     content: content,
-                     authorName: author,
-                     userId: row["user_id"]?.value as? String,
-                     fileId: row["file_id"]?.value as? String,
-                     createdAt: created,
-                     updatedAt: updated)
-    }
-
-    // 🔽  NEW: maps raw row dictionary → Comment model
-    private func convertRowToComment(_ row: [String: AnyCodable]) -> Comment? {
-        guard let id        = row["id"]?.value as? String,
-              let topicId   = row["topic_id"]?.value as? String,
-              let content   = row["content"]?.value as? String,
-              let author    = row["author_name"]?.value as? String,
-              let created   = row["created_at"]?.value as? String,
-              let updated   = row["updated_at"]?.value as? String
-        else { return nil }
-
-        return Comment(
-            id: id,
-            topicId: topicId,
-            content: content,
-            authorName: author,
-            userId: row["user_id"]?.value as? String,
-            fileId: row["file_id"]?.value as? String,
-            createdAt: created,
-            updatedAt: updated
-        )
-    }
 
     private func mimeType(for filename: String) -> String {
         switch (filename as NSString).pathExtension.lowercased() {
@@ -397,7 +164,7 @@ final class SelfDBManager: ObservableObject {
         }
     }
     
-    private func resetError() { errorMessage = "" }
+    internal func resetError() { errorMessage = "" }
     
     // -----------------------------------------------------------------------
     // MARK: - Compatibility helpers – used by the SwiftUI views
@@ -427,7 +194,7 @@ final class SelfDBManager: ObservableObject {
         }
     }
     
-    // MARK: –  Topics --------------------------------------------------------
+    // MARK: - Compatibility helpers for Views
     
     /// Old wrapper kept for UI compatibility.
     @MainActor
@@ -435,87 +202,73 @@ final class SelfDBManager: ObservableObject {
         await fetchTopics()
     }
     
-    // MARK: –  Comments ------------------------------------------------------
-    /// Fetch comments for a topic (newest → oldest)
-    func fetchCommentsForTopic(_ topicId: String,
-                               page: Int = 1,
-                               pageSize: Int = 100) async -> [Comment] {
-        guard let sdk = selfDB else { return [] }
-
-        let res = await sdk.database.getTableData(
-            "comments",
-            page: page,
-            pageSize: pageSize,
-            filterColumn: "topic_id",
-            filterValue: topicId
+    // These methods maintain compatibility with existing views
+    // They now delegate to the model extensions that use the context pattern
+    
+    func createTopic(
+        title: String,
+        content: String,
+        authorName: String,
+        fileData: Data? = nil,
+        filename: String? = nil
+    ) async -> Topic? {
+        await Topic.create(
+            using: self,
+            title: title,
+            content: content,
+            authorName: authorName,
+            fileData: fileData,
+            filename: filename
         )
-
-        guard res.isSuccess, let table = res.data else {
-            if let err = res.error { self.handle(error: err, context: "fetchCommentsForTopic") }
-            return []
-        }
-
-        return table.data
-            .compactMap(convertRowToComment)
-            .sorted { $0.createdAt > $1.createdAt }        // newest first
     }
-
-    /// Quick helper – returns total number of comments for a topic
-    func commentCount(for topicId: String) async -> Int {
-        guard let sdk = selfDB else { return 0 }
-        let res = await sdk.database.getTableData(
-            "comments",
-            page: 1,
-            pageSize: 1,              // we only need metadata
-            filterColumn: "topic_id",
-            filterValue: topicId
+    
+    func updateTopic(
+        topicId: String,
+        title: String,
+        content: String,
+        fileData: Data? = nil,
+        filename: String? = nil,
+        oldFileId: String? = nil,
+        removeFile: Bool = false
+    ) async -> Topic? {
+        guard let topic = topics.first(where: { $0.id == topicId }) else { return nil }
+        
+        var updatedTopic = topic
+        updatedTopic.title = title
+        updatedTopic.content = content
+        
+        return await Topic.update(
+            using: self,
+            topic: updatedTopic,
+            fileData: fileData,
+            filename: filename,
+            oldFileId: oldFileId,
+            removeFile: removeFile
         )
-        if let meta = res.data?.metadata {
-            return meta.total_count
-        }
-        return 0
     }
-
-    /// Insert a new comment and refresh topics list (for live comment-counts)
-    @discardableResult
-    func createComment(topicId: String,
-                       content: String,
-                       authorName: String,
-                       fileData: Data? = nil,
-                       filename: String? = nil) async -> Comment? {
-        guard let sdk = selfDB else { return nil }
-        
-        // Ensure bucket exists for file uploads
-        if fileData != nil && bucketId == nil {
-            await ensureUserBucket()
-        }
-        
-        var insert: [String: Any] = [
-            "topic_id":    topicId,
-            "content":     content,
-            "author_name": authorName
-        ]
-        // ⬇️ only attach user_id when we actually have one
-        if let uid = currentUser?.id, !uid.isEmpty {
-            insert["user_id"] = uid
-        }
-
-        if let data = fileData,
-           let name = filename,
-           let bucket = bucketId,
-           let fileId = await uploadFile(data: data, filename: name, bucketId: bucket) {
-            insert["file_id"] = fileId
-        }
-
-        let res = await sdk.database.insertRow("comments", data: insert)
-        guard res.isSuccess, let row = res.data else { errorMessage = res.error?.localizedDescription ?? ""; return nil }
-        // refresh topics so counts & ordering update in list view
-        Task { await fetchTopics() }
-        return convertRowToComment(row)
+    
+    func deleteTopic(topicId: String) async -> Bool {
+        guard let topic = topics.first(where: { $0.id == topicId }) else { return false }
+        return await Topic.delete(using: self, topic: topic)
     }
-
-    /// Update an existing comment
-    @discardableResult
+    
+    func createComment(
+        topicId: String,
+        content: String,
+        authorName: String,
+        fileData: Data? = nil,
+        filename: String? = nil
+    ) async -> Comment? {
+        await Comment.create(
+            using: self,
+            topicId: topicId,
+            content: content,
+            authorName: authorName,
+            fileData: fileData,
+            filename: filename
+        )
+    }
+    
     func updateComment(
         commentId: String,
         content: String,
@@ -524,64 +277,33 @@ final class SelfDBManager: ObservableObject {
         oldFileId: String? = nil,
         removeFile: Bool = false
     ) async -> Comment? {
-        guard let sdk = selfDB else { return nil }
+        // We need to fetch the comment first to get all its data
+        let comments = await Comment.fetch(for: "", using: self)
+        guard let comment = comments.first(where: { $0.id == commentId }) else { return nil }
         
-        // Ensure bucket exists for file uploads
-        if fileData != nil && bucketId == nil {
-            await ensureUserBucket()
-        }
+        var updatedComment = comment
+        updatedComment.content = content
         
-        var update: [String: Any] = [
-            "content": content
-        ]
-        if removeFile { update["file_id"] = NSNull() }
-        
-        if let data = fileData {
-            if let oldId = oldFileId {
-                _ = await sdk.storage.deleteFile(oldId)
-                FileURLCache.shared.invalidate(fileId: oldId)
-            }
-            if let name = filename,
-               let bucket = bucketId,
-               let fileId = await uploadFile(data: data, filename: name, bucketId: bucket) {
-                update["file_id"] = fileId
-            }
-        }
-
-        let res = await sdk.database.updateRow("comments", rowId: commentId, data: update)
-        guard res.isSuccess, let row = res.data else { errorMessage = res.error?.localizedDescription ?? ""; return nil }
-        Task { await fetchTopics() }
-        return convertRowToComment(row)
-    }
-
-    /// Delete a comment and its file (if present)
-    @discardableResult
-    func deleteComment(commentId: String) async -> Bool {
-        guard let sdk = selfDB else { return false }
-
-        // 1️⃣ Grab the comment to discover file_id
-        let rowRes = await sdk.database.getTableData(
-            "comments",
-            page: 1,
-            pageSize: 1,
-            filterColumn: "id",
-            filterValue: commentId
+        return await Comment.update(
+            using: self,
+            comment: updatedComment,
+            fileData: fileData,
+            filename: filename,
+            oldFileId: oldFileId,
+            removeFile: removeFile
         )
-        if let row = rowRes.data?.data.first,
-           let fid = row["file_id"]?.value as? String {
-            _ = await sdk.storage.deleteFile(fid)
-            FileURLCache.shared.invalidate(fileId: fid)
-        }
-
-        // 2️⃣ Delete row
-        let res = await sdk.database.deleteRow("comments", rowId: commentId)
-        if res.isSuccess { Task { await fetchTopics() } }
-        else { errorMessage = res.error?.localizedDescription ?? "" }
-        return res.isSuccess
     }
+    
+    func deleteComment(commentId: String) async -> Bool {
+        // We need to fetch the comment first
+        let comments = await SelfDBContext<Comment>.fetch(filterColumn: "id", filterValue: commentId, manager: self)
+        guard let comment = comments.first else { return false }
+        return await Comment.delete(using: self, comment: comment)
+    }
+    
 
-    // MARK: - Centralised error handling -------------------------------------
-    private func handle(error: SelfDBError, context: String) {
+    // MARK: - Error handling
+    internal func handle(error: SelfDBError, context: String) {
         // Ignore cancelled tasks – they are expected when views disappear
         if case .networkError(let nsError as NSError) = error,
            nsError.code == NSURLErrorCancelled {

@@ -7,6 +7,9 @@
 
 import SwiftUI
 import PhotosUI
+#if os(iOS)
+import UIKit
+#endif
 
 struct AddCommentView: View {
     @Binding var isPresented: Bool
@@ -31,7 +34,9 @@ struct AddCommentView: View {
     @State private var selectedMediaData: Data?
     @State private var selectedFileName: String?
     @State private var showingCamera = false
+    #if os(iOS)
     @State private var capturedImage: UIImage?
+    #endif
     @State private var selectedMediaType: String?
     @State private var remoteFileId: String? = nil
     @State private var remoteFileRemoved = false
@@ -299,7 +304,7 @@ struct AddCommentView: View {
                 (selfDBManager.currentUser?.email ?? "Anonymous") : 
                 authorName.trimmingCharacters(in: .whitespacesAndNewlines)
             
-            await selfDBManager.createComment(
+            let createdComment = await selfDBManager.createComment(
                 topicId: topicId,
                 content: content.trimmingCharacters(in: .whitespacesAndNewlines),
                 authorName: finalAuthorName,
@@ -308,22 +313,13 @@ struct AddCommentView: View {
             )
             
             await MainActor.run {
-                if selfDBManager.errorMessage.isEmpty {
-                    // Create a temporary comment for immediate UI update
-                    let tempComment = Comment(
-                        id: UUID().uuidString,
-                        topicId: topicId,
-                        content: content.trimmingCharacters(in: .whitespacesAndNewlines),
-                        authorName: finalAuthorName,
-                        userId: selfDBManager.currentUser?.id,
-                        fileId: nil,
-                        createdAt: ISO8601DateFormatter().string(from: Date()),
-                        updatedAt: ISO8601DateFormatter().string(from: Date())
-                    )
-                    onCommentAdded(tempComment)
+                if let comment = createdComment {
+                    // Use the actual created comment from the server
+                    onCommentAdded(comment)
                     isPresented = false
                 } else {
-                    errorMessage = selfDBManager.errorMessage
+                    // Handle error case
+                    errorMessage = selfDBManager.errorMessage.isEmpty ? "Failed to create comment" : selfDBManager.errorMessage
                 }
                 isLoading = false
             }
@@ -337,9 +333,9 @@ struct AddCommentView: View {
         errorMessage = ""
         
         Task {
-            await selfDBManager.updateComment(
+            let updatedComment = await selfDBManager.updateComment(
                 commentId: commentId,
-                content: content.trimmed(),
+                content: content.trimmingCharacters(in: .whitespacesAndNewlines),
                 fileData: selectedMediaData,
                 filename: selectedFileName,
                 oldFileId: originalComment.fileId,
@@ -347,22 +343,13 @@ struct AddCommentView: View {
             )
             
             await MainActor.run {
-                if selfDBManager.errorMessage.isEmpty {
-                    // Create updated comment for immediate UI update
-                    let updatedComment = Comment(
-                        id: originalComment.id,
-                        topicId: originalComment.topicId,
-                        content: content.trimmingCharacters(in: .whitespacesAndNewlines),
-                        authorName: originalComment.authorName,
-                        userId: originalComment.userId,
-                        fileId: originalComment.fileId,
-                        createdAt: originalComment.createdAt,
-                        updatedAt: ISO8601DateFormatter().string(from: Date())
-                    )
-                    onCommentAdded(updatedComment)
+                if let comment = updatedComment {
+                    // Use the actual updated comment from the server
+                    onCommentAdded(comment)
                     isPresented = false
                 } else {
-                    errorMessage = selfDBManager.errorMessage
+                    // Handle error case
+                    errorMessage = selfDBManager.errorMessage.isEmpty ? "Failed to update comment" : selfDBManager.errorMessage
                 }
                 isLoading = false
             }
@@ -376,14 +363,15 @@ struct AddCommentView: View {
         errorMessage = ""
         
         Task {
-            await selfDBManager.deleteComment(commentId: commentId)
+            let deleteSuccess = await selfDBManager.deleteComment(commentId: commentId)
             
             await MainActor.run {
-                if selfDBManager.errorMessage.isEmpty {
+                if deleteSuccess {
                     onCommentDeleted?() // Call the delete callback
                     isPresented = false
                 } else {
-                    errorMessage = selfDBManager.errorMessage
+                    // Handle error case
+                    errorMessage = selfDBManager.errorMessage.isEmpty ? "Failed to delete comment" : selfDBManager.errorMessage
                 }
                 isLoading = false
             }
