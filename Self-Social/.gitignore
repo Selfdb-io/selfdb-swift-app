@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific state (present in this repo)
+*.xcuserstate
+*.xccheckout
+*.xcscmblueprint
+xcuserdata/
+
+# APNS/Auth keys (present in this repo)
+*.p8

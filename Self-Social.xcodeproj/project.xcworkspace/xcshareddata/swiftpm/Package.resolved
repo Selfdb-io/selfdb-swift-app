@@ -1,0 +1,15 @@
+{
+  "originHash" : "802ef07eeeba9235610408bc2e1843964cd1a69175f57486cd28dcf3f82b2074",
+  "pins" : [
+    {
+      "identity" : "selfdb-ios",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Selfdb-io/selfdb-ios",
+      "state" : {
+        "revision" : "b2132b27b8c5e7236c3bc5e088984332ea4a4439",
+        "version" : "0.0.5"
+      }
+    }
+  ],
+  "version" : 3
+}
