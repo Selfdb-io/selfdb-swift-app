@@ -1,9 +1,7 @@
 //
 //  notification.ts
 //  Self-Social
-//
-//  Created by rodgers on 05/01/2026.
-//
+
 
 
 // Actual functions
